@@ -12,17 +12,32 @@
 #include "common/Type.h"
 #include "itkImageRegionIterator.h"
 #include "common/Math.h"
+#include "itkRGBToLuminanceImageFilter.h"
+#include "common/ImageProcessing.h"
+#include "common/InputOutput.h"
+#include "itkCastImageFilter.h"
 
 extern "C"
 {
 #include <igraph.h>
 }
+
 class Graph
 {
 
 private:
 	//typedefs
-	typedef itk::ImageRegionIterator<type::grayImage> iteratorType;
+
+	using componentType = unsigned char;
+	using rgbPixelType = itk::RGBPixel< componentType >;
+	using rgbImageType = itk::Image< rgbPixelType, 2 >;
+
+	using grayType = double;
+	using grayImageType = itk::Image<double,2>;
+	using grayIteratorType = itk::ImageRegionIterator<grayImageType>;
+	using grayImagePointer = typename grayImageType::Pointer;
+	using grayIndexType = grayImageType::IndexType;
+
 public:
 	Graph();
 	~Graph()
@@ -30,26 +45,26 @@ public:
 	}
 	;
 
-	void setImage(type::grayImagePointer image);
+	void setImage(rgbImageType::Pointer rgbImage);
 	void buildOld();
 	void build();
 
 private:
 
-	type::grayImagePointer image;
+	grayImagePointer image;
 
-	//Auxiliary matrices,
+	//Auxiliary matrices to create the igraph, because it is faster than itkImage
 	std::vector<std::vector<double> > imageIntensity;
-	//std::vector<std::vector<std::vector<type::grayImage::IndexType> > > imageIndex;
 
 	double laplaceWeigth;
 	unsigned radius;
 	igraph_t graph;
 
 	//methods
-	inline double laplacianWeigh(const iteratorType& it1, const iteratorType& it2);
-	inline double laplacianWeigh(const std::vector<unsigned>& index1, const std::vector<unsigned>& index2);
-	double stimateParameterB(iteratorType inputIt);
+	inline double laplacianWeight(grayIndexType currentIndex, grayIndexType neighborIndex, grayIteratorType currentIt, grayIteratorType neighborIt, double b);
+	inline double stimateParameterB(grayIteratorType imageIt, grayImageType::IndexType currentIndex, grayIteratorType neighborhoodIt);
+
+	void segmentBackground();
 
 };
 
@@ -60,100 +75,98 @@ Graph::Graph()
 
 }
 
-void Graph::setImage(type::grayImagePointer image)
+/*
+ * Separate background and foreground, background is set to 0.
+ *
+ * */
+
+void Graph::segmentBackground()
 {
-	this->image = image;
 
-	iteratorType it(image, image->GetLargestPossibleRegion());
+	grayImagePointer segmented = ip::otsuThreshold<grayImageType>(image);
 
-	type::grayImage::SizeType imageSize = image->GetLargestPossibleRegion().GetSize();
+	grayIteratorType imIt(image, image->GetLargestPossibleRegion()); //image iterator
+	grayIteratorType segIt(segmented, image->GetLargestPossibleRegion()); //segmented image iterator
 
-	std::vector<double> rows(imageSize[1], 0.0);
-	std::vector<std::vector<double>> imageAux(imageSize[0], rows);
-
-	unsigned i = 0;
-	for (it.GoToBegin(); !it.IsAtEnd(); ++it, ++i)
+	for (imIt.GoToBegin(), segIt.GoToBegin(); !imIt.IsAtEnd(); ++imIt, ++segIt)
 	{
-		type::grayImage::IndexType index = it.GetIndex();
-		imageAux[index[0]][index[1]] = it.Get();
+
+		if (segIt.Get() == 0)
+		{
+			imIt.Set(0);
+
+		}
+
 	}
 
-	imageIntensity = imageAux;
+	/*typedef itk::CastImageFilter<grayImageType, rgbImageType > CastFilterType;
+	 CastFilterType::Pointer castFilter = CastFilterType::New();
+	 castFilter->SetInput(image);
+	 castFilter->Update();
+	 io::writeImage<rgbImageType>(castFilter->GetOutput(), "/home/oscar/MEGA/post-doc/src/input/laudos/otsu.png");
+	 */
 
 }
 
-double Graph::stimateParameterB(iteratorType inputIt)
+void Graph::setImage(rgbImageType::Pointer rgbImage)
 {
 
-	type::grayImage::RegionType neighborhood;
+	using luminanceImageFilterType = itk::RGBToLuminanceImageFilter< rgbImageType, grayImageType >;
+	luminanceImageFilterType::Pointer luminanceImageFilter = luminanceImageFilterType::New();
+	luminanceImageFilter->SetInput(rgbImage);
 
-	type::grayImage::IndexType index = inputIt.GetIndex(); //lower index
+	luminanceImageFilter->Update();
+	this->image = luminanceImageFilter->GetOutput();
 
-	index[0] = (index[0] - radius < 0) ? 0 : index[0] - radius;
-	index[1] = (index[1] - radius < 0) ? 0 : index[1] - radius;
+	segmentBackground();
 
-	type::grayImage::IndexType upper = inputIt.GetIndex();
+}
 
-	type::grayImage::SizeType size = inputIt.GetRegion().GetSize(); //aux
+inline double Graph::stimateParameterB(grayIteratorType imageIt, grayImageType::IndexType currentIndex, grayIteratorType neighborhoodIt)
+{
 
-	upper[0] = (upper[0] + radius >= size[0]) ? size[0] - 1 : upper[0] + radius;
-	upper[1] = (upper[1] + radius >= size[1]) ? size[1] - 1 : upper[1] + radius;
-
-	neighborhood.SetIndex(index);
-	neighborhood.SetUpperIndex(upper);
-
-	iteratorType it(image, neighborhood);
+	type::grayImage::SizeType size = image->GetLargestPossibleRegion().GetSize(); //aux
 
 	double sumIntensity = 0.0;
 	double sumIndex = 0.0;
-	double intensity = inputIt.Get();
-	index = inputIt.GetIndex();
-
 	unsigned count = 0;
 
-	for (it.GoToBegin(); !it.IsAtEnd(); ++it)
+	neighborhoodIt.GoToBegin();
+
+	grayImageType::IndexType loweIndex = neighborhoodIt.GetRegion().GetIndex();
+	grayImageType::IndexType upperIndex = neighborhoodIt.GetRegion().GetUpperIndex();
+
+	for (unsigned i = loweIndex[0]; i <= upperIndex[0]; ++i)
 	{
-		sumIntensity += std::abs(it.Get() - intensity);
-		sumIndex += math::euclideanDistance<type::grayImage::IndexType>(it.GetIndex(), index);
-		++count;
+		for (unsigned j = loweIndex[1]; j <= upperIndex[1]; ++j, ++neighborhoodIt)
+		{
+			//if()
+
+			sumIntensity += std::abs(neighborhoodIt.Get() - imageIt.Get());
+			sumIndex += std::sqrt(std::pow(static_cast<double>(i - currentIndex[0]), 2) + std::pow(static_cast<double>(j - currentIndex[1]), 2));
+			++count;
+
+		}
+
 	}
 
 	double b = (sumIndex + sumIntensity) / static_cast<double>(count);
 
-	return (b == 0) ? 0.0000000000001 : b; //to avoid division by zero
-
+	return (b == 0) ? 0.0000000000001 : b; //to avoid division by zero*/
 }
 
-inline double Graph::laplacianWeigh(const iteratorType& it1, const iteratorType& it2)
+inline double Graph::laplacianWeight(grayIndexType currentIndex, grayIndexType neighborIndex, grayIteratorType currentIt, grayIteratorType neighborIt, double b)
 {
 
 	double indexTerm;
 	double intensityTerm;
 
-	indexTerm = math::euclideanDistance<type::rgbImage::IndexType>(it1.GetIndex(), it2.GetIndex());
-	intensityTerm = math::euclideanDistance<type::rgbImage::PixelType>(it1.Get(), it2.Get());
+	indexTerm = math::euclideanDistance<grayIndexType>(neighborIndex, currentIndex, 2);
+	intensityTerm = std::abs(neighborIt.Get() - currentIt.Get());
 
 	double numerator = std::abs(intensityTerm + indexTerm);
 
-	double b = 1;
-
-	return (1.0 / (2.0 * b)) * std::exp(-laplaceWeigth * numerator / b); //2.0
-
-}
-
-inline double Graph::laplacianWeigh(const std::vector<unsigned>& index1, const std::vector<unsigned>& index2)
-{
-
-	double indexTerm;
-	double intensityTerm;
-
-	indexTerm = math::euclideanDistance<std::vector<unsigned>>(index1, index2, 2);
-	intensityTerm = std::abs(imageIntensity[index1[0]][index1[1]] - imageIntensity[index2[0]][index2[1]]);
-
-	double numerator = std::abs(intensityTerm + indexTerm);
-
-	double b = 1;
-
+	//std::cin>>b;
 	return (1.0 / (2.0 * b)) * std::exp(-laplaceWeigth * numerator / b); //2.0
 
 }
@@ -161,39 +174,75 @@ inline double Graph::laplacianWeigh(const std::vector<unsigned>& index1, const s
 void Graph::build()
 {
 
-	type::grayImage::SizeType size = image->GetLargestPossibleRegion().GetSize();
+	grayIteratorType imageIt(image, image->GetLargestPossibleRegion());
 
-	for (unsigned i = 0; i < size[0]; ++i)
+	grayImageType::RegionType neighborhood;
+
+	grayImageType::IndexType lowerIndex;
+	grayImageType::IndexType upperIndex;
+	grayImageType::IndexType currentIndex;
+	grayImageType::IndexType neighborIndex;
+
+	grayImageType::SizeType imageSize = image->GetLargestPossibleRegion().GetSize();
+	std::cout << imageSize << std::endl;
+
+	double b;
+	double weight;
+	unsigned vectorIndex;
+
+	igraph_vector_t weights;
+	igraph_vector_t edges;
+	igraph_vector_init(&edges, 0);
+	igraph_vector_init(&weights, 0);
+
+	//imageIt.GetIndex() is a very expensive operation,
+	//size the matrix position is used, the traditional
+	//two for loops strategy is faster than computing imageIt
+	imageIt.GoToBegin();
+	for (unsigned width = 0; width < imageSize[0]; ++width)
 	{
+		currentIndex[0] = width;
 
-		for (unsigned j = 0; j < size[1]; ++j)
+		lowerIndex[0] = (static_cast<signed>(width - radius) < 0) ? 0 : width - radius;
+		upperIndex[0] = (width + radius >= imageSize[0]) ? imageSize[0] - 1 : width + radius;
+
+		for (unsigned height = 0; height < imageSize[1]; ++height, ++imageIt)
 		{
-			//get neighbors
+			currentIndex[1] = height;
+			lowerIndex[1] = (static_cast<signed>(height - radius) < 0) ? 0 : height - radius;
+			upperIndex[1] = (height + radius >= imageSize[1]) ? imageSize[1] - 1 : height + radius;
 
+			neighborhood.SetIndex(lowerIndex);
+			neighborhood.SetUpperIndex(upperIndex);
 
+			grayIteratorType neighborIt(image, neighborhood);
+
+			//Estimating parameter b
+			b = stimateParameterB(imageIt, currentIndex, neighborIt);
+			neighborIt.GoToBegin();
+			vectorIndex = height * imageSize[0] + width;
+			for (unsigned i = lowerIndex[0]; i <= upperIndex[0]; ++i)
+			{
+				neighborIndex[0] = i;
+				for (unsigned j = lowerIndex[1]; j <= upperIndex[1]; ++j, ++neighborIt)
+				{
+					neighborIndex[1] = j;
+					weight = laplacianWeight(currentIndex, neighborIndex, imageIt, neighborIt, b);
+
+					igraph_vector_resize(&edges, igraph_vector_size(&edges) + 2);
+					igraph_vector_set(&edges, igraph_vector_size(&edges) - 1, vectorIndex);
+					igraph_vector_set(&edges, igraph_vector_size(&edges) - 2, j * imageSize[0] + i);
+
+					igraph_vector_resize(&weights, igraph_vector_size(&weights) + 1);
+					igraph_vector_set(&weights, igraph_vector_size(&weights) - 1, weight);
+
+				}
+			}
 
 		}
-	}
-
-}
-
-void Graph::buildOld()
-{
-
-	iteratorType it1(image, image->GetLargestPossibleRegion());
-	iteratorType it2(image, image->GetLargestPossibleRegion());
-
-	for (it1.GoToBegin(); !it1.IsAtEnd(); ++it1)
-	{
-		double b = stimateParameterB(it1);
-
-		for (it2.GoToBegin(); !it2.IsAtEnd(); ++it2)
-		{
-			laplacianWeigh(it1, it2);
-		}
 
 	}
-
+	igraph_create(&graph, &edges, 0, 0);
 }
 
 #endif /* GRAPH_H_ */

@@ -13,7 +13,7 @@
 #include <iomanip>
 #include "Type.h"
 
-#include "QuickView.h"
+//#include "QuickView.h"
 
 namespace io
 {
@@ -60,6 +60,20 @@ typename imageType::Pointer readImage(const std::string& file_name)
 	return reader->GetOutput();
 
 }
+
+template<typename imageType>
+void writeImage(const typename imageType::Pointer &image, const std::string &fileName, const std::string& message = "")
+{
+
+	typedef itk::ImageFileWriter<imageType> writer_t;
+	typename writer_t::Pointer writer = writer_t::New();
+	writer->SetFileName(fileName);
+	writer->SetInput(image);
+	writer->Update();
+
+	print("Writing image " + message, true);
+}
+
 
 template<typename imageType>
 void quickView(typename imageType::Pointer image)

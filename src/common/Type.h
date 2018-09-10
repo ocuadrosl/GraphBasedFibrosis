@@ -13,12 +13,12 @@
 namespace type
 {
 
-typedef double gray;
-typedef itk::Image<double, 2> grayImage;
+using gray = unsigned char;
+using grayImage = itk::Image<gray,2>;
 typedef grayImage::Pointer grayImagePointer;
 
-typedef double componentType;
-typedef itk::RGBPixel<double> rgbPixel;
+typedef unsigned char componentType;
+typedef itk::RGBPixel<componentType> rgbPixel;
 typedef itk::Image<rgbPixel, 2> rgbImage;
 typedef rgbImage::Pointer rgbImagePointer;
 
