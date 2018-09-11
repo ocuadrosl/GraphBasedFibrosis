@@ -49,6 +49,11 @@ public:
 	void buildOld();
 	void build();
 
+	igraph_t get() const;
+	igraph_vector_t getWeights() const;
+
+	void setRadius(unsigned radius);
+
 private:
 
 	grayImagePointer image;
@@ -59,10 +64,12 @@ private:
 	double laplaceWeigth;
 	unsigned radius;
 	igraph_t graph;
+	igraph_vector_t weights;
 
 	//methods
 	inline double laplacianWeight(grayIndexType currentIndex, grayIndexType neighborIndex, grayIteratorType currentIt, grayIteratorType neighborIt, double b);
 	inline double stimateParameterB(grayIteratorType imageIt, grayImageType::IndexType currentIndex, grayIteratorType neighborhoodIt);
+	inline std::vector<double> computeMeans(grayImageType::RegionType region);
 
 	void segmentBackground();
 
@@ -75,6 +82,57 @@ Graph::Graph()
 
 }
 
+void Graph::setRadius(unsigned radius)
+{
+	this->radius = radius;
+
+}
+/*
+ * compute the median for index and intensity
+ *
+ * */
+inline std::vector<double> Graph::computeMeans(grayImageType::RegionType region)
+{
+	//[3] intensity mean
+	std::vector<double> means(3, 0.0);
+
+	grayIteratorType it(image, region);
+	grayIndexType index;
+
+	double count = 0;
+	for (it.GoToBegin(); !it.IsAtEnd(); ++it)
+	{
+		index = it.GetIndex();
+		means[0] += index[0];
+		means[1] += index[1];
+		means[3] += it.Get();
+		++count;
+
+	}
+
+	means[0] = means[0] / count;
+	means[1] = means[1] / count;
+	means[2] = means[2] / count;
+
+	return means;
+
+}
+
+/* returns the igraph_t object
+ *
+ * */
+igraph_t Graph::get() const
+{
+
+	return this->graph;
+
+}
+igraph_vector_t Graph::getWeights() const
+{
+
+	return this->weights;
+
+}
 /*
  * Separate background and foreground, background is set to 0.
  *
@@ -131,19 +189,22 @@ inline double Graph::stimateParameterB(grayIteratorType imageIt, grayImageType::
 	double sumIndex = 0.0;
 	unsigned count = 0;
 
+
+
+
 	neighborhoodIt.GoToBegin();
 
 	grayImageType::IndexType loweIndex = neighborhoodIt.GetRegion().GetIndex();
 	grayImageType::IndexType upperIndex = neighborhoodIt.GetRegion().GetUpperIndex();
 
-	for (unsigned i = loweIndex[0]; i <= upperIndex[0]; ++i)
-	{
-		for (unsigned j = loweIndex[1]; j <= upperIndex[1]; ++j, ++neighborhoodIt)
-		{
-			//if()
 
-			sumIntensity += std::abs(neighborhoodIt.Get() - imageIt.Get());
-			sumIndex += std::sqrt(std::pow(static_cast<double>(i - currentIndex[0]), 2) + std::pow(static_cast<double>(j - currentIndex[1]), 2));
+	for (unsigned i = loweIndex[1]; i <= upperIndex[1]; ++i) //height
+	{
+		for (unsigned j = loweIndex[0]; j <= upperIndex[0]; ++j, ++neighborhoodIt) //width
+		{
+
+			sumIntensity += std::abs(static_cast<double>(neighborhoodIt.Get() - imageIt.Get()));
+			//sumIndex += std::sqrt(std::pow(static_cast<double>(j - currentIndex[0]), 2) + std::pow(static_cast<double>(i - currentIndex[1]), 2));
 			++count;
 
 		}
@@ -158,11 +219,13 @@ inline double Graph::stimateParameterB(grayIteratorType imageIt, grayImageType::
 inline double Graph::laplacianWeight(grayIndexType currentIndex, grayIndexType neighborIndex, grayIteratorType currentIt, grayIteratorType neighborIt, double b)
 {
 
-	double indexTerm;
-	double intensityTerm;
+	double indexTerm=0;
+	double intensityTerm=0;
 
-	indexTerm = math::euclideanDistance<grayIndexType>(neighborIndex, currentIndex, 2);
+	//indexTerm = math::euclideanDistance<grayIndexType>(neighborIndex, currentIndex);
 	intensityTerm = std::abs(neighborIt.Get() - currentIt.Get());
+
+	return 255 - intensityTerm;
 
 	double numerator = std::abs(intensityTerm + indexTerm);
 
@@ -190,27 +253,25 @@ void Graph::build()
 	double weight;
 	unsigned vectorIndex;
 
-	igraph_vector_t weights;
 	igraph_vector_t edges;
 	igraph_vector_init(&edges, 0);
 	igraph_vector_init(&weights, 0);
 
 	//imageIt.GetIndex() is a very expensive operation,
-	//size the matrix position is used, the traditional
-	//two for loops strategy is faster than computing imageIt
+	//since the matrix position is used, the traditional
+	//two for loops strategy is faster than computing using imageIt.GetIndex()
 	imageIt.GoToBegin();
-	for (unsigned width = 0; width < imageSize[0]; ++width)
+	for (unsigned height = 0; height < imageSize[1]; ++height)
 	{
-		currentIndex[0] = width;
+		currentIndex[1] = height;
+		lowerIndex[1] = (static_cast<signed>(height - radius) < 0) ? 0 : height - radius;
+		upperIndex[1] = (height + radius >= imageSize[1]) ? imageSize[1] - 1 : height + radius;
 
-		lowerIndex[0] = (static_cast<signed>(width - radius) < 0) ? 0 : width - radius;
-		upperIndex[0] = (width + radius >= imageSize[0]) ? imageSize[0] - 1 : width + radius;
-
-		for (unsigned height = 0; height < imageSize[1]; ++height, ++imageIt)
+		for (unsigned width = 0; width < imageSize[0]; ++width, ++imageIt)
 		{
-			currentIndex[1] = height;
-			lowerIndex[1] = (static_cast<signed>(height - radius) < 0) ? 0 : height - radius;
-			upperIndex[1] = (height + radius >= imageSize[1]) ? imageSize[1] - 1 : height + radius;
+			currentIndex[0] = width;
+			lowerIndex[0] = (static_cast<signed>(width - radius) < 0) ? 0 : width - radius;
+			upperIndex[0] = (width + radius >= imageSize[0]) ? imageSize[0] - 1 : width + radius;
 
 			neighborhood.SetIndex(lowerIndex);
 			neighborhood.SetUpperIndex(upperIndex);
@@ -219,19 +280,26 @@ void Graph::build()
 
 			//Estimating parameter b
 			b = stimateParameterB(imageIt, currentIndex, neighborIt);
+			b = 1;
+
 			neighborIt.GoToBegin();
-			vectorIndex = height * imageSize[0] + width;
-			for (unsigned i = lowerIndex[0]; i <= upperIndex[0]; ++i)
+
+			vectorIndex = (height * imageSize[0]) + width;
+
+			//std::cout << imageIt.GetIndex() << " " << width << "-" << height << " " << vectorIndex << " " << std::endl;
+			for (unsigned i = lowerIndex[1]; i <= upperIndex[1]; ++i) //height
 			{
-				neighborIndex[0] = i;
-				for (unsigned j = lowerIndex[1]; j <= upperIndex[1]; ++j, ++neighborIt)
+				neighborIndex[1] = i;
+				for (unsigned j = lowerIndex[0]; j <= upperIndex[0]; ++j, ++neighborIt) //width
 				{
-					neighborIndex[1] = j;
+					neighborIndex[0] = j;
 					weight = laplacianWeight(currentIndex, neighborIndex, imageIt, neighborIt, b);
+
+					//std::cout << imageIt.Get() << " " <<neighborIt.Get()<< " " <<weight << " " << std::endl;
 
 					igraph_vector_resize(&edges, igraph_vector_size(&edges) + 2);
 					igraph_vector_set(&edges, igraph_vector_size(&edges) - 1, vectorIndex);
-					igraph_vector_set(&edges, igraph_vector_size(&edges) - 2, j * imageSize[0] + i);
+					igraph_vector_set(&edges, igraph_vector_size(&edges) - 2, (i * imageSize[0]) + j);
 
 					igraph_vector_resize(&weights, igraph_vector_size(&weights) + 1);
 					igraph_vector_set(&weights, igraph_vector_size(&weights) - 1, weight);
@@ -242,7 +310,14 @@ void Graph::build()
 		}
 
 	}
+
+	std::cout << igraph_vector_size(&weights) << std::endl;
 	igraph_create(&graph, &edges, 0, 0);
+
+	igraph_simplify(&graph, true, true, 0);
+
+	io::print("Building graph", true);
+
 }
 
 #endif /* GRAPH_H_ */

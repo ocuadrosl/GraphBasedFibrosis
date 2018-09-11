@@ -29,6 +29,22 @@ inline double euclideanDistance(type const& p1, type const& p2, unsigned size = 
 
 }
 
+/*
+ * temporally 2d
+ *
+ * */
+inline std::vector<unsigned> vectorIndexToMatrixIndex(unsigned width, unsigned height, unsigned vectorIndex)
+{
+	std::vector<unsigned> matrixIndex(2);
+
+	matrixIndex[1] = vectorIndex / width;
+
+	matrixIndex[0] = vectorIndex % width;
+
+	return matrixIndex;
+
+}
+
 
 }
 
