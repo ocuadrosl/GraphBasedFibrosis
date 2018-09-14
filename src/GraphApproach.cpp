@@ -22,25 +22,24 @@ int main()
 	using rgbPixelType = itk::RGBPixel< componentType >;
 	using rgbImageType = itk::Image< rgbPixelType, 2 >;
 
-	//type::rgbImagePointer image = io::readImage<rgbImageType>("/home/oscar/MEGA/post-doc/src/input/rp/patient_1/00529 (3).jpg");
-	type::rgbImagePointer image = io::readImage<rgbImageType>("/home/oscar/MEGA/post-doc/src/input/laudos/e3.png");
-
-	//io::writeImage<type::grayImage>(ip::otsuThreshold<type::grayImage>(image), "/home/oscar/MEGA/post-doc/src/input/laudos/outsu.png");
-
+	type::rgbImagePointer image = io::readImage<rgbImageType>("/home/oscar/MEGA/post-doc/src/input/rp/patient_2/small_3.jpg");
+	//type::rgbImagePointer image = io::readImage<rgbImageType>("/home/oscar/MEGA/post-doc/src/input/laudos/d3.png");
 	Graph graph;
 	graph.setImage(image);
-	graph.setRadius(3);
+	graph.setRadius(10);
 	graph.build();
 
 	GraphClustering graphClustering;
 
-	graphClustering.fastGreedy(graph.get(), graph.getWeights());
+	graphClustering.fastGreedy(graph.getGraph(), graph.getWeights());
+	//graphClustering.labelPropagation(graph.getGraph(), graph.getWeights());
+	//graphClustering.multilevel(graph.getGraph(), graph.getWeights());
+	//graphClustering.eigenvector(graph.getGraph(), graph.getWeights());
 
-	std::vector<unsigned> imageSize(2);
-	imageSize[0] = image->GetLargestPossibleRegion().GetSize()[0];
-	imageSize[1] = image->GetLargestPossibleRegion().GetSize()[1];
+	unsigned width = image->GetLargestPossibleRegion().GetSize()[0];
+	unsigned height = image->GetLargestPossibleRegion().GetSize()[1];
 
-	io::writeImage<type::rgbImage>(graphClustering.getMembershipAsImage(imageSize), "/home/oscar/MEGA/post-doc/src/input/laudos/clusters.png");
+	io::writeImage<type::rgbImage>(graphClustering.membershipToImage(width, height, graph.getVertexIdMap()), "/home/oscar/MEGA/post-doc/src/output/clusters.png");
 
 	std::cout << "DONE" << std::endl; // prints !!!Hello World!!!
 

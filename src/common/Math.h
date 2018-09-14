@@ -33,7 +33,7 @@ inline double euclideanDistance(type const& p1, type const& p2, unsigned size = 
  * temporally 2d
  *
  * */
-inline std::vector<unsigned> vectorIndexToMatrixIndex(unsigned width, unsigned height, unsigned vectorIndex)
+inline std::vector<unsigned> vectorIndexToMatrixIndex(unsigned width, unsigned vectorIndex)
 {
 	std::vector<unsigned> matrixIndex(2);
 
@@ -44,7 +44,6 @@ inline std::vector<unsigned> vectorIndexToMatrixIndex(unsigned width, unsigned h
 	return matrixIndex;
 
 }
-
 
 }
 
